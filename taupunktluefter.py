@@ -100,9 +100,9 @@ def main():
             lcd.clear()
             lcd.move_to(0,0)
             lcd.putstr("CPU Neustart...")
-            while (1):  # Endlosschleife um das Display zu lesen und die CPU durch den Watchdog neu zu starten
-                pass
-        wdt.feed()  # Watchdog zurücksetzen
+            #while (1):  # Endlosschleife um das Display zu lesen und die CPU durch den Watchdog neu zu starten
+            #    pass
+        #wdt.feed()  # Watchdog zurücksetzen
 
         # **** Taupunkte errechnen********
         Taupunkt_1 = taupunkt(t1, h1)
@@ -134,7 +134,7 @@ def main():
         lcd.move_to(0,1)
         lcd.putstr(out2)
         sleep_ms(6000) # Zeit um das Display zu lesen
-        wdt.feed() # Watchdog zurücksetzen
+        #wdt.feed() # Watchdog zurücksetzen
 
         lcd.clear()
         lcd.move_to(0,0)
@@ -156,13 +156,13 @@ def main():
         else:
             Relais.on() # Relais ausschalten
             lcd.putstr("L" + chr(ue) + "ftung AUS")
-            lcd.backlight_off()
+            #lcd.backlight_off()
         
         lcd.move_to(0,1)
         lcd.putstr(("Delta TP:{:4.1f}"+chr(grad)+"C").format(DeltaTP))
         sleep_ms(3000)     # Wartezeit zwischen zwei Messungen
-        wdt.feed()   # Watchdog zurücksetzen 
+        #wdt.feed()   # Watchdog zurücksetzen 
 
 # Enable Watchdog
-wdt = WDT(timeout=8000)
+#wdt = WDT(timeout=8000)
 main()
