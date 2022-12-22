@@ -168,11 +168,6 @@ def display(args=None):
     _h1 = round(h1) # Convert to integer
     _t2 = round(t2) # Convert to integer
     _h2 = round(h2) # Convert to integer
-    # Genaue Ausgabe auf Konsole
-    out  = f"S1: {t1:.2f}°C|{h1:.2f}%|{Taupunkt_1:.2f}°C"
-    out += "\n"
-    out += f"S2: {t2:.2}°C|{h2:.2}%|{Taupunkt_2:.2f}°C"
-    print(out)
     lcd.clear()
     lcd.move_to(0,0)
     out1 = f"{_t1:3.0f}{chr(grad)}C|{_h1:2.0f}%|{Taupunkt_1:4.1f}{chr(grad)}C"
@@ -181,8 +176,7 @@ def display(args=None):
     lcd.move_to(0,1)
     lcd.putstr(out2)
     DeltaTP = Taupunkt_1 - Taupunkt_2
-    print(f"DeltaTP {DeltaTP:.2f}")
-
+    # Genaue Ausgabe auf Konsole
     if (DeltaTP > (SCHALTmin + HYSTERESE)):
         rel = True
     if (DeltaTP < (SCHALTmin)):
@@ -195,12 +189,15 @@ def display(args=None):
     if (rel == True):
         Relais.off() # Relais einschalten
         rgb_led.set(RGB_led.red)
-        print("Lüfter ein")
     else:
         Relais.on() # Relais ausschalten
         rgb_led.set(RGB_led.green)
-        print("Lüfter aus") 
-    
+    out  = f"S1: {t1:.2f}°C|{h1:.2f}%|{Taupunkt_1:.2f}°C | " + \
+           f"S2: {t2:.2}°C|{h2:.2}%|{Taupunkt_2:.2f}°C | " + \
+           f"DeltaTP {DeltaTP:.2f} | {not Relais.value()}"
+    print(out)
+
+
 def logdta(args=None,fname=LOGFILENAME):
     """
     Logge Werte in Buffer und einmal pro Tag in Datei fname
