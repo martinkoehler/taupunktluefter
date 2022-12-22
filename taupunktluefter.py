@@ -1,10 +1,8 @@
-import micropython
-import dht
-import math
+import micropython, dht, math, time, os, io
 from machine import Pin, I2C, Timer, reset
 from time import sleep_ms
 from machine_i2c_lcd import I2cLcd
-from neopixel import NeoPixel # We have a ws2812rgb LED
+from led import Singleton, RGB_led, Led
 
 # Define constants
 RELAIPIN = 6 # Anschluss des Lüfter-Relais
@@ -12,10 +10,6 @@ RELAIPIN = 6 # Anschluss des Lüfter-Relais
 DHTPIN_1 = 2  # Datenleitung für den DHT-Sensor 1 (innen)
 DHTPIN_2 = 10 # Datenleitung für den DHT-Sensor 2 (außen)
 
-# RGB Led
-PIN_NP = 23
-LEDS = 1
-BRIGHTNESS = 10
 
 # USR Button
 USR_PIN = 13
@@ -32,6 +26,11 @@ HYSTERESE = 1.0   # Abstand von Ein- und Ausschaltpunkt
 TEMP1_min = 10.0  # Minimale Innentemperatur, bei der die Lüftung aktiviert wird
 TEMP2_min = -10.0 # Minimale Außentemperatur, bei der die Lüftung aktiviert wird
 
+# Logfile (Einträge alle 5 min, einmal pro Tag geschrieben)
+# Date,t1,h1,t2,h2,fan
+# 23.08.2022 01:12:48,22.3,40.5,7.6,39.3,1
+LOGFILENAME = "taupunkt.csv"
+
 # Spezielle Zeichen
 ue = 245
 grad = 223
@@ -42,6 +41,10 @@ t1 = 0.0 # Innentemperatur
 t2 = 0.0 # Außentemperatur
 h2 = 0.0 # Außenluftfeuchtigkeit
 
+logbuffer = io.StringIO()
+
+# Helper functions
+# ======================================
 def taupunkt(t, r):
     if (t >= 0):
         a = 7.5
@@ -65,84 +68,31 @@ def taupunkt(t, r):
     tt = (b*v) / (a-v)
     return tt
 
-# We use singletons
-class Singleton(object):
-  def __new__(cls):
-    if not hasattr(cls, 'instance'):
-      cls.instance = super(Singleton, cls).__new__(cls)
-    return cls.instance
+def pt(t = None):
+    """
+    Format a time integer in human readable form (pt for Pretty format Time)
+    """
+    if t == None:
+        t = time.time()
+        if t > 1913677968 : # Hot fix for emulator
+            t = time.mktime((2022, 8, 23, 1, 12, 48, 0, 0))
+    y, mm, d, h, m, s = time.localtime(t)[0:6]
+    return f"{d:02d}.{mm:02d}.{y} {h:02d}:{m:02d}:{s:02d}"
 
-class RGB_led(Singleton):
-    # GPIO-Pin für WS2812
-    pin_np = PIN_NP
-    # Anzahl der LEDs
-    leds = LEDS
-    # Helligkeit: 0 bis 255
-    brightness = BRIGHTNESS
-    white = (brightness, brightness, brightness)
-    red = (brightness, 0, 0)
-    green = (0, brightness, 0)
-    blue = (0, 0, brightness)
-    yellow = (brightness, brightness, 0)
-    pink = (brightness, 0, brightness)
-    turquoise = (0, brightness, brightness)
-    off = (0, 0, 0)
-    np = NeoPixel(Pin(pin_np, Pin.OUT), leds)
-    def __init__(self):
-        self.status = RGB_led.off
-        self.np[0] = self.status
-        self.np.write()
-    
-    def set(self,color):
-        self.np[0] = color
-        self.np.write()
-        self.status = color
-    
-    def blink(self, color, ms=50, num=1):
-        for i in range(0,num):
-            self.np[0] = color
-            self.np.write()
-            sleep_ms(ms)
-            self.np[0] = self.off
-            self.np.write()
-            sleep_ms(ms)
-        self.np[0] = self.status
-        self.np.write()
-        
-class Led(Singleton):
-    def __init__(self):
-        # Initialisierung von GPIO25 als Ausgang
-        self.led_onboard = Pin(25, Pin.OUT)
-        self.led_onboard.off()
-        self.status = 0
-    
-    def on(self):
-        self.led_onboard.on()
-        self.status = 1
-        
-    def off(self):
-        self.led_onboard.off()
-        self.status = 0        
-        
-    def blink(self, ms=50, num=1):
-        for i in range(0,num):
-            self.led_onboard.on()
-            sleep_ms(ms)
-            self.led_onboard.off()
-            sleep_ms(ms)
-        self.led_onboard.value(self.status)
+def print_log(name=LOGFILENAME):
+    with open(name,"rt") as f:
+        for line in f:
+            print(line)
 
+# Hauptklasse
 class Alarm_timer(Singleton):
-    led = Led()
-    
     def __init__(self):
-        self.heartbeat_ref = self.heartbeat
         self.measure_ref = measure
         self.display_ref = display
-        self.timer1= Timer(period=1000, mode=Timer.PERIODIC, callback=self._cb1) # Heartbeat: Jede Sekunde
-        self.timer2= Timer(period=10000, mode=Timer.PERIODIC, callback=self._cb2) # Anzeige: Alle 10s
-        self.timer3= Timer(period=5000, mode=Timer.PERIODIC, callback=self._cb3) # Messung: Alle 5s
-    
+        self.logdta_ref = logdta
+        self.timer1 = Timer(period=2000, mode=Timer.PERIODIC, callback=self._cb1) # Anzeige: Alle 2s
+        self.timer2 = Timer(period=3000, mode=Timer.PERIODIC, callback=self._cb2) # Messung: Alle 3s
+        self.timer3 = Timer(period=10*60*1000, mode=Timer.PERIODIC, callback=self._cb3) # Loggen: Alle 10min
     def stop(self):
         self.timer1.deinit()
         self.timer2.deinit()
@@ -153,17 +103,15 @@ class Alarm_timer(Singleton):
     # We war not allowed to allocate memory in the ISR See
     # https://docs.micropython.org/en/latest/reference/isr_rules.html#isr-rulese
     def _cb1(self, tim):
-        micropython.schedule(self.heartbeat_ref, tim)
-    def _cb2(self, tim):
         micropython.schedule(self.display_ref, tim)
-    def _cb3(self, tim):
+    def _cb2(self, tim):
         micropython.schedule(self.measure_ref, tim)
-    
-    def heartbeat(self,args=None):
-        self.led.blink()
+    def _cb3(self, tim):
+        micropython.schedule(self.logdta_ref, tim)
 
 def measure(args=None):
     global h1, t1, h2, t2
+    led.blink()
     fehler = False
     msg0 = ""
     msg1 = ""
@@ -221,19 +169,19 @@ def display(args=None):
     _t2 = round(t2) # Convert to integer
     _h2 = round(h2) # Convert to integer
     # Genaue Ausgabe auf Konsole
-    out  = "S1: {:4.3}°C|{:2.2}%|{:4.2f}°C".format(t1,h1,Taupunkt_1)
+    out  = f"S1: {t1:.2f}°C|{h1:.2f}%|{Taupunkt_1:.2f}°C"
     out += "\n"
-    out += "S2: {:4.3}°C|{:2.2}%|{:4.2f}°C".format(t2,h2,Taupunkt_2)
+    out += f"S2: {t2:.2}°C|{h2:.2}%|{Taupunkt_2:.2f}°C"
     print(out)
     lcd.clear()
     lcd.move_to(0,0)
-    out1 = ("{:3}"+chr(grad) +"C|{:2}%|{:4.1f}"+chr(grad)+"C").format(_t1,_h1,Taupunkt_1)
-    out2 = ("{:3}"+chr(grad)+"C|{:2}%|{:4.1f}"+chr(grad)+"C").format(_t2,_h2,Taupunkt_2)
+    out1 = f"{_t1:3.0f}{chr(grad)}C|{_h1:2.0f}%|{Taupunkt_1:4.1f}{chr(grad)}C"
+    out2 = f"{_t2:3.0f}{chr(grad)}C|{_h2:2.0f}%|{Taupunkt_2:4.1f}{chr(grad)}C"
     lcd.putstr(out1)
     lcd.move_to(0,1)
     lcd.putstr(out2)
     DeltaTP = Taupunkt_1 - Taupunkt_2
-    print("DeltaTP {:4.1f}".format(DeltaTP))
+    print(f"DeltaTP {DeltaTP:.2f}")
 
     if (DeltaTP > (SCHALTmin + HYSTERESE)):
         rel = True
@@ -253,13 +201,40 @@ def display(args=None):
         rgb_led.set(RGB_led.green)
         print("Lüfter aus") 
     
+def logdta(args=None,fname=LOGFILENAME):
+    """
+    Logge Werte in Buffer und einmal pro Tag in Datei fname
+    """
+    global logbuffer
+    MAXLINES = 144
+    dta = f"{pt()},{t1},{h1},{t2},{h2},{Relais.value()}\n"
+    print(dta)
+    logbuffer.write(dta)
+    if logbuffer.getvalue().count("\n") > MAXLINES:
+        with open(LOGFILENAME,"a") as f:
+            logbuffer.flush()
+            log = logbuffer.getvalue() # Lese gesamten Puffer
+            logbuffer = io.StringIO() # Puffer löschen
+            print("Logbuffer gelöscht")
+            f.write(log)
+
 # Setup
+# Logfile vorbereiten
+try:
+    with open(LOGFILENAME,"rt") as f:
+        pass
+except OSError:
+    # Datei existiert nicht, erzeuge und schreibe Header
+    with open(LOGFILENAME,"wt") as f:
+        f.write("Date,t1,h1,t2,h2,fan\n")
+
 
 dht1 = dht.DHT22(Pin(DHTPIN_1))   # Der Innensensor wird ab jetzt mit dht1 angesprochen
 dht2 = dht.DHT22(Pin(DHTPIN_2))   # Der Außensensor wird ab jetzt mit dht2 angesprochen
 Relais = Pin(RELAIPIN,Pin.OUT)
 Relais.on() # Relais ausschalten
 rgb_led = RGB_led()
+led = Led()
 # Initialisierung I2C
 i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)
 # Initialisierung LCD über I2C
