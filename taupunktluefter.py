@@ -176,6 +176,7 @@ def display(args=None):
     lcd.move_to(0,1)
     lcd.putstr(out2)
     DeltaTP = Taupunkt_1 - Taupunkt_2
+    rel = False
     # Genaue Ausgabe auf Konsole
     if (DeltaTP > (SCHALTmin + HYSTERESE)):
         rel = True
@@ -185,7 +186,6 @@ def display(args=None):
         rel = False
     if (t2 < TEMP2_min ):
         rel = False
-
     if (rel == True):
         Relais.off() # Relais einschalten
         rgb_led.set(RGB_led.red)
@@ -198,7 +198,7 @@ def display(args=None):
     print(out)
 
 
-def logdta(args=None,fname=LOGFILENAME):
+def logdta(args=None,fname=LOGFILENAME, store=False):
     """
     Logge Werte in Buffer und einmal pro Tag in Datei fname
     """
@@ -207,7 +207,7 @@ def logdta(args=None,fname=LOGFILENAME):
     dta = f"{pt()},{t1},{h1},{t2},{h2},{Relais.value()}\n"
     print(dta)
     logbuffer.write(dta)
-    if logbuffer.getvalue().count("\n") > MAXLINES:
+    if store or logbuffer.getvalue().count("\n") > MAXLINES:
         with open(LOGFILENAME,"a") as f:
             logbuffer.flush()
             log = logbuffer.getvalue() # Lese gesamten Puffer
