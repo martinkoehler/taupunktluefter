@@ -204,7 +204,7 @@ def logdta(args=None,fname=LOGFILENAME, store=False):
     """
     global logbuffer
     MAXLINES = 144
-    dta = f"{pt()},{t1:.2f},{h1:.2f},{taupunkt(t1,h1):.2f},{t2:.2f},{h2:.2f},{taupunkt(t2,h2):.2f},{Relais.value()}\n"
+    dta = f"{pt()},{t1:.2f},{h1:.2f},{taupunkt(t1,h1):.2f},{t2:.2f},{h2:.2f},{taupunkt(t2,h2):.2f},{not Relais.value()}\n"
     print(dta)
     logbuffer.write(dta)
     if store or logbuffer.getvalue().count("\n") > MAXLINES:
