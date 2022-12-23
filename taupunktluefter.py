@@ -1,4 +1,4 @@
-import micropython, dht, math, time, os, io
+import micropython, dht, math, time, os, io, machine
 from machine import Pin, I2C, Timer, reset
 from time import sleep_ms
 from machine_i2c_lcd import I2cLcd
@@ -193,7 +193,7 @@ def display(args=None):
         Relais.on() # Relais ausschalten
         rgb_led.set(RGB_led.green)
     out  = f"S1: {t1:.2f}°C|{h1:.2f}%|{Taupunkt_1:.2f}°C | " + \
-           f"S2: {t2:.2}°C|{h2:.2}%|{Taupunkt_2:.2f}°C | " + \
+           f"S2: {t2:.2f}°C|{h2:.2f}%|{Taupunkt_2:.2f}°C | " + \
            f"DeltaTP {DeltaTP:.2f} | {not Relais.value()}"
     print(out)
 
@@ -204,14 +204,16 @@ def logdta(args=None,fname=LOGFILENAME, store=False):
     """
     global logbuffer
     MAXLINES = 144
-    dta = f"{pt()},{t1},{h1},{t2},{h2},{Relais.value()}\n"
+    dta = f"{pt()},{t1:.2f},{h1:.2f},{taupunkt(t1,h1):.2f},{t2:.2f},{h2:.2f},{taupunkt(t2,h2):.2f},{Relais.value()}\n"
     print(dta)
     logbuffer.write(dta)
     if store or logbuffer.getvalue().count("\n") > MAXLINES:
         with open(LOGFILENAME,"a") as f:
+            state = machine.disable_irq() # Sicher stellen, dass logbuffer unverändert bleibt
             logbuffer.flush()
             log = logbuffer.getvalue() # Lese gesamten Puffer
             logbuffer = io.StringIO() # Puffer löschen
+            machine.enable_irq(state)
             print("Logbuffer gelöscht")
             f.write(log)
 
@@ -223,7 +225,7 @@ try:
 except OSError:
     # Datei existiert nicht, erzeuge und schreibe Header
     with open(LOGFILENAME,"wt") as f:
-        f.write("Date,t1,h1,t2,h2,fan\n")
+        f.write("Date,t1,h1,tp1,t2,h2,tp2,fan\n")
 
 
 dht1 = dht.DHT22(Pin(DHTPIN_1))   # Der Innensensor wird ab jetzt mit dht1 angesprochen
