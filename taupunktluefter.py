@@ -21,8 +21,8 @@ Korrektur_h_1 =  0 # Korrekturwert Innensensor Luftfeuchtigkeit
 Korrektur_h_2 = -1 # Korrekturwert Außensensor Luftfeuchtigkeit
 #***********************************************************
 
-SCHALTmin = 5.0   # minimaler Taupunktunterschied, bei dem das Relais schaltet
-HYSTERESE = 1.0   # Abstand von Ein- und Ausschaltpunkt
+SCHALTmin = 1.0   # minimaler Taupunktunterschied, bei dem das Relais schaltet
+HYSTERESE = 4.0   # Abstand von Ein- und Ausschaltpunkt
 TEMP1_min = 10.0  # Minimale Innentemperatur, bei der die Lüftung aktiviert wird
 TEMP2_min = -10.0 # Minimale Außentemperatur, bei der die Lüftung aktiviert wird
 
@@ -164,6 +164,7 @@ def display(args=None):
     xxx°C|xx%|xx,x°C
     xxx°C|xx%|xx,x°C
     """
+    global rel
     _t1 = round(t1) # Convert to integer
     _h1 = round(h1) # Convert to integer
     _t2 = round(t2) # Convert to integer
@@ -176,7 +177,6 @@ def display(args=None):
     lcd.move_to(0,1)
     lcd.putstr(out2)
     DeltaTP = Taupunkt_1 - Taupunkt_2
-    rel = False
     # Genaue Ausgabe auf Konsole
     if (DeltaTP > (SCHALTmin + HYSTERESE)):
         rel = True
@@ -232,6 +232,7 @@ dht1 = dht.DHT22(Pin(DHTPIN_1))   # Der Innensensor wird ab jetzt mit dht1 anges
 dht2 = dht.DHT22(Pin(DHTPIN_2))   # Der Außensensor wird ab jetzt mit dht2 angesprochen
 Relais = Pin(RELAIPIN,Pin.OUT)
 Relais.on() # Relais ausschalten
+rel = False # Relais ist aus
 rgb_led = RGB_led()
 led = Led()
 # Initialisierung I2C
