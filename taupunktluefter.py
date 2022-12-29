@@ -21,8 +21,8 @@ Korrektur_h_1 =  0 # Korrekturwert Innensensor Luftfeuchtigkeit
 Korrektur_h_2 = -1 # Korrekturwert Außensensor Luftfeuchtigkeit
 #***********************************************************
 
-SCHALTmin = 1.0   # minimaler Taupunktunterschied, bei dem das Relais schaltet
-HYSTERESE = 4.0   # Abstand von Ein- und Ausschaltpunkt
+SCHALTmin = 0.2   # minimaler Taupunktunterschied, bei dem das Relais schaltet
+HYSTERESE = 3.0   # Abstand von Ein- und Ausschaltpunkt
 TEMP1_min = 10.0  # Minimale Innentemperatur, bei der die Lüftung aktiviert wird
 TEMP2_min = -10.0 # Minimale Außentemperatur, bei der die Lüftung aktiviert wird
 
