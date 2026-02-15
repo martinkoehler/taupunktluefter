@@ -48,6 +48,7 @@
 const unsigned long DISPLAY_INTERVAL_MS = 2000UL;
 const unsigned long MEASURE_INTERVAL_MS = 3000UL;
 const unsigned long LOG_INTERVAL_MS     = 10UL * 60UL * 1000UL; // 10 min
+const unsigned long WIFI_RSSI_INTERVAL_MS = 500UL;
 
 // sensor corrections
 const float KORREKTUR_T_1 = -2.0;
@@ -132,6 +133,8 @@ void handleSaveConfig();
 void handleDownload();
 void handleNotFound();
 void handleStatusJSON();
+void handleWifiRssiJSON();
+void handleWifiScanJSON();
 void loadConfig();
 void saveConfig();
 void eraseConfigEEPROM();
@@ -146,6 +149,7 @@ void mqttReconnect();
 void publishMeasurementMQTT();
 void addMqttLog(const String &l);
 void applyTZ(); // apply cfg.tz to environment
+void scanWifiStations();
 
 // ---------- Helpers ----------
 float taupunkt(float t, float r) {
@@ -170,10 +174,22 @@ String pt() {
     snprintf(buf, sizeof(buf), "00.00.1970 %02lu:%02lu:%02lu", h, m, s);
     return String(buf);
   } else {
+    int day = timeinfo.tm_mday;
+    int month = timeinfo.tm_mon + 1;
+    int year = timeinfo.tm_year + 1900;
+    int hour = timeinfo.tm_hour;
+    int minute = timeinfo.tm_min;
+    int second = timeinfo.tm_sec;
+    if (day < 0) day = 0; else if (day > 99) day = 99;
+    if (month < 0) month = 0; else if (month > 99) month = 99;
+    if (year < 0) year = 0; else if (year > 9999) year = 9999;
+    if (hour < 0) hour = 0; else if (hour > 99) hour = 99;
+    if (minute < 0) minute = 0; else if (minute > 99) minute = 99;
+    if (second < 0) second = 0; else if (second > 99) second = 99;
     char buf[32];
-    snprintf(buf, sizeof(buf), "%02d.%02d.%04d %02d:%02d:%02d",
-             timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900,
-             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    snprintf(buf, sizeof(buf), "%02u.%02u.%04u %02u:%02u:%02u",
+             (unsigned)day, (unsigned)month, (unsigned)year,
+             (unsigned)hour, (unsigned)minute, (unsigned)second);
     return String(buf);
   }
 }
@@ -317,6 +333,25 @@ canvas{width:100%;height:140px}
   </div>
 </div>
 
+<div class="box">
+  <h3>Wi-Fi Monitor</h3>
+  <div class="row">
+    <div class="col">
+      <div style="margin-bottom:8px">
+        <button type="button" onclick="startRssi()">Start RSSI</button>
+        <button type="button" onclick="stopRssi()" style="background:#6c757d">Stop RSSI</button>
+      </div>
+      <pre id="wifiRssi" style="height:60px;overflow:auto;background:#f8fbff;padding:8px;border-radius:6px">RSSI monitor stopped</pre>
+    </div>
+    <div class="col">
+      <div style="margin-bottom:8px">
+        <button type="button" onclick="scanNetworks()">Scan Networks</button>
+      </div>
+      <pre id="wifiScan" style="height:120px;overflow:auto;background:#f8fbff;padding:8px;border-radius:6px">No scan yet</pre>
+    </div>
+  </div>
+</div>
+
 <div class="box row">
   <div class="col">
     <h3>Temperature & Dewpoint</h3>
@@ -351,6 +386,7 @@ canvas{width:100%;height:140px}
 <script>
 let samples = { t1:[], t2:[], tp1:[], tp2:[], time:[] };
 const maxSamples = 60;
+let rssiTimer = null;
 function fetchStatus(){
   fetch('/status.json').then(r=>r.json()).then(j=>{
     document.getElementById('t1').innerText = j.t1.toFixed(2)+' °C';
@@ -427,6 +463,56 @@ function saveCfg(ev){
 }
 function downloadCsv(){ window.location = '/download'; }
 function openUpdate(){ window.location = '/update'; }
+
+function fetchRssi(){
+  fetch('/wifi/rssi.json').then(r=>r.json()).then(j=>{
+    if (j.connected) {
+      document.getElementById('wifiRssi').innerText =
+        `SSID: ${j.ssid}\nRSSI: ${j.rssi} dBm\nQuality: ${j.quality}%\nMode: ${j.mode}`;
+    } else {
+      document.getElementById('wifiRssi').innerText = `Wi-Fi not connected\nMode: ${j.mode}`;
+    }
+  }).catch(()=>{
+    document.getElementById('wifiRssi').innerText = 'RSSI fetch failed';
+  });
+}
+
+function startRssi(){
+  if (rssiTimer) return;
+  fetchRssi();
+  rssiTimer = setInterval(fetchRssi, 500);
+}
+
+function stopRssi(){
+  if (rssiTimer) {
+    clearInterval(rssiTimer);
+    rssiTimer = null;
+  }
+  document.getElementById('wifiRssi').innerText = 'RSSI monitor stopped';
+}
+
+function scanNetworks(){
+  const out = document.getElementById('wifiScan');
+  out.innerText = 'Scanning...';
+  fetch('/wifi/scan.json').then(r=>r.json()).then(j=>{
+    if (!j.ok) {
+      out.innerText = j.error || 'Scan failed';
+      return;
+    }
+    if (!j.networks || j.networks.length === 0) {
+      out.innerText = 'No networks found';
+      return;
+    }
+    let lines = [];
+    for (const n of j.networks) {
+      lines.push(`${n.ssid || '<hidden>'} | RSSI ${n.rssi} dBm | CH ${n.channel} | ${n.enc}`);
+    }
+    out.innerText = lines.join('\n');
+  }).catch(()=>{
+    out.innerText = 'Scan request failed';
+  });
+}
+
 setInterval(fetchStatus,2000);
 fetchStatus(); loadConfig();
 </script>
@@ -473,7 +559,7 @@ void handleDownload() {
 }
 
 void handleNotFound() {
-  if (WiFi.getMode() == WIFI_AP) {
+  if (WiFi.getMode() != WIFI_STA) {
     server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
     server.send(302, "text/plain", "");
     return;
@@ -497,7 +583,6 @@ void handleStatusJSON() {
   if (LittleFS.exists(LOG_FILENAME)) {
     File f = LittleFS.open(LOG_FILENAME, "r");
     if (f) {
-      int lines = 0;
       int maxlines = 10;
       // read backwards
       std::vector<String> tail;
@@ -530,12 +615,68 @@ void handleStatusJSON() {
   server.send(200, "application/json", out);
 }
 
+void handleWifiRssiJSON() {
+  StaticJsonDocument<256> doc;
+  wl_status_t st = WiFi.status();
+  doc["connected"] = (st == WL_CONNECTED);
+
+  if (st == WL_CONNECTED) {
+    long rssi = WiFi.RSSI();
+    int quality = constrain(2 * (rssi + 100), 0, 100);
+    doc["ssid"] = WiFi.SSID();
+    doc["rssi"] = rssi;
+    doc["quality"] = quality;
+  }
+
+  if (WiFi.getMode() == WIFI_STA) doc["mode"] = "STA";
+  else if (WiFi.getMode() == WIFI_AP) doc["mode"] = "AP";
+  else if (WiFi.getMode() == WIFI_AP_STA) doc["mode"] = "AP+STA";
+  else doc["mode"] = "OFF";
+
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleWifiScanJSON() {
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.createNestedArray("networks");
+
+  if (WiFi.getMode() == WIFI_AP) {
+    WiFi.mode(WIFI_AP_STA);
+    delay(50);
+  }
+
+  int found = WiFi.scanNetworks();
+  if (found < 0) {
+    doc["ok"] = false;
+    doc["error"] = "scan failed";
+  } else {
+    doc["ok"] = true;
+    doc["count"] = found;
+    for (int i = 0; i < found; ++i) {
+      JsonObject n = arr.createNestedObject();
+      n["ssid"] = WiFi.SSID(i);
+      n["rssi"] = WiFi.RSSI(i);
+      n["channel"] = WiFi.channel(i);
+      n["enc"] = (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "open" : "secured";
+    }
+  }
+  WiFi.scanDelete();
+
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
 // ---------- WiFi/AP / web service ----------
 void startWebServices() {
   server.on("/", handleRoot);
   server.on("/saveconfig", HTTP_POST, handleSaveConfig);
   server.on("/download", HTTP_GET, handleDownload);
   server.on("/status.json", HTTP_GET, handleStatusJSON);
+  server.on("/wifi/rssi.json", HTTP_GET, handleWifiRssiJSON);
+  server.on("/wifi/scan.json", HTTP_GET, handleWifiScanJSON);
   server.onNotFound(handleNotFound);
   httpUpdater.setup(&server, "/update", cfg.ota_user.c_str(), cfg.ota_pass.c_str());
   server.begin();
@@ -569,6 +710,27 @@ void applyTZ() {
     tzset();
     Serial.print("Applied TZ: "); Serial.println(cfg.tz);
   }
+}
+
+void scanWifiStations() {
+  Serial.println("Scanning WiFi stations...");
+  int found = WiFi.scanNetworks();
+  if (found < 0) {
+    Serial.println("WiFi scan failed");
+    return;
+  }
+
+  Serial.printf("Found %d network(s)\n", found);
+  for (int i = 0; i < found; ++i) {
+    String enc = (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "open" : "secured";
+    Serial.printf("%2d: %-32s RSSI=%4d dBm CH=%2d %s\n",
+                  i + 1,
+                  WiFi.SSID(i).c_str(),
+                  WiFi.RSSI(i),
+                  WiFi.channel(i),
+                  enc.c_str());
+  }
+  WiFi.scanDelete();
 }
 
 void startSTA() {
@@ -622,11 +784,10 @@ void publishMeasurementMQTT() {
 // ---------- Measurement / display / logging ----------
 void doMeasure() {
   digitalWrite(LED_PIN, LOW); delay(80); digitalWrite(LED_PIN, HIGH);
-  bool err = false;
   float rh1 = dht.readHumidity(); float tt1 = dht.readTemperature();
-  if (isnan(rh1) || isnan(tt1)) { Serial.println("DHT read error"); err = true; } else { h1 = rh1 + KORREKTUR_H_1; t1 = tt1 + KORREKTUR_T_1; }
+  if (isnan(rh1) || isnan(tt1)) { Serial.println("DHT read error"); } else { h1 = rh1 + KORREKTUR_H_1; t1 = tt1 + KORREKTUR_T_1; }
   sensors_event_t humidityEvent, tempEvent;
-  if (!sht4.getEvent(&humidityEvent, &tempEvent)) { Serial.println("SHT4x read error"); err = true; } else { h2 = humidityEvent.relative_humidity + KORREKTUR_H_2; t2 = tempEvent.temperature + KORREKTUR_T_2; }
+  if (!sht4.getEvent(&humidityEvent, &tempEvent)) { Serial.println("SHT4x read error"); } else { h2 = humidityEvent.relative_humidity + KORREKTUR_H_2; t2 = tempEvent.temperature + KORREKTUR_T_2; }
 }
 
 void doDisplay() {
@@ -645,7 +806,7 @@ void doDisplay() {
   Serial.printf("S1: %.2f C | %.2f %% | tp1 %.2f C | S2: %.2f C | %.2f %% | tp2 %.2f C | fan %d\n", t1,h1,tp1,t2,h2,tp2, rel?1:0);
 }
 
-void doLog(bool force=false) {
+void doLog(bool force) {
   float tp1 = taupunkt(t1,h1), tp2 = taupunkt(t2,h2);
   String row = pt() + "," + String(t1,2) + "," + String(h1,2) + "," + String(tp1,2) + "," + String(t2,2) + "," + String(h2,2) + "," + String(tp2,2) + "," + String(rel?1:0) + "\n";
   Serial.print(row);
@@ -675,6 +836,10 @@ void setup(){
   }
 
   loadConfig();
+
+  WiFi.mode(WIFI_STA);
+  delay(100);
+  scanWifiStations();
 
   dht.begin();
   Wire.begin();
@@ -716,6 +881,18 @@ void loop(){
         if (WiFi.status() == WL_CONNECTED) { Serial.println("WiFi reconnected"); wifiReconnectDelay = 1000; configTime(0,0,cfg.ntp_host.c_str()); applyTZ(); }
         else { Serial.println("WiFi reconnect failed"); wifiReconnectDelay = min((unsigned long)60000, wifiReconnectDelay*2); }
       }
+    }
+  }
+
+  static unsigned long lastRssiPrint = 0;
+  if (millis() - lastRssiPrint >= WIFI_RSSI_INTERVAL_MS) {
+    lastRssiPrint = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      long rssi = WiFi.RSSI();
+      int quality = constrain(2 * (rssi + 100), 0, 100);
+      Serial.printf("WiFi RSSI: %ld dBm (%d%%) | SSID: %s\n", rssi, quality, WiFi.SSID().c_str());
+    } else {
+      Serial.println("WiFi RSSI: not connected");
     }
   }
 
